@@ -1,54 +1,73 @@
 import streamlit as st
 import re
+import spacy
 
 # ----------------------------------------------------
-# 1. 核心處理引擎 (純 Python) - 版本 2.0
+# 1. 核心處理引擎 (純 Python + spaCy) - 版本 3.0
 # ----------------------------------------------------
-def process_text_by_rules(raw_text):
+
+# --- 使用 Streamlit 的快取功能，讓模型只載入一次，大幅提升速度 ---
+@st.cache_resource
+def load_spacy_model():
+    """安全地載入 spaCy 中文模型"""
+    # 從下載的套件中載入模型
+    return spacy.load("zh_core_web_sm")
+
+# 載入模型
+nlp = load_spacy_model()
+
+def process_text_with_nlp(raw_text):
     """
-    這是我們的文字清洗引擎，所有規則都在這裡定義。
+    這是我們最終的文字清洗引擎，結合了規則和 NLP。
     """
+    # --- 預處理：先做一些基本的、不影響句子結構的清洗 ---
     text = raw_text
-    
-    # 規則一：去除時間戳 (例如 44:12 或 [01:23:45])
+    # 規則一：去除時間戳
     text = re.sub(r'\[?\b\d{1,2}:\d{2}(:\d{2})?\b\]?\s*', '', text)
-    
-    # --- 修改點 1：移除政治詞語清洗規則 ---
-    # 下面這行已被註解掉，不再執行
-    # text = re.sub(r'习近平|习主席|中共', '', text)
-    
     # 規則二：去除常見口頭禪
     filler_words = ['嗯', '啊', '呃', '這個', '那個', '就是說', '然後', '所以']
     text = re.sub(r'\b(' + '|'.join(filler_words) + r')\b', '', text, flags=re.IGNORECASE)
+    # 將多個換行符合併為一個，方便 spaCy 處理
+    text = re.sub(r'\s*\n\s*', ' ', text.strip())
+
+
+    # --- 核心步驟：使用 spaCy 進行智能分句和分段 ---
+    doc = nlp(text)
     
-    # --- 修改點 2：為沒有標點的行尾添加句號 ---
-    # 這個正則表達式尋找所有不是標點符號結尾的換行
-    # ([^。！？\?]) 匹配任何非標點的字元，\n 匹配換行
-    # \1 代表將匹配到的那個字元保留，然後在其後加上句號和換行
-    text = re.sub(r'([^。！？\?])\n', r'\1。\n', text)
-    # 確保文章最後一行也有標點
-    if text and not text.endswith(('。', '！', '？', '?', ' ')):
-        text += '。'
-
-    # --- 修改點 3：更智能、更可靠的分段邏輯 ---
-    # 先將整篇文章按“換行”拆分成一個列表
-    lines = text.splitlines()
-    # 過濾掉所有完全是空白的行
-    non_empty_lines = [line.strip() for line in lines if line.strip()]
-    # 用兩個換行符 (代表一個空行) 將它們重新組合起來，形成乾淨的段落
-    text = '\n\n'.join(non_empty_lines)
-
-    # 規則四：整理格式 (合併多餘空格)
-    text = re.sub(r' +', ' ', text)
+    paragraphs = []
+    current_paragraph = ""
     
-    return text.strip()
-
+    # 遍歷 spaCy 準確切分出的每一個句子
+    for sent in doc.sents:
+        sentence_text = sent.text.strip()
+        
+        # 如果當前段落加上新句子會超過200字
+        if len(current_paragraph) + len(sentence_text) > 200 and current_paragraph:
+            # 就把當前的段落存起來
+            paragraphs.append(current_paragraph)
+            # 開始一個新段落
+            current_paragraph = sentence_text
+        else:
+            # 否則，就把新句子加到當前段落後面 (如果段落不為空，加個空格)
+            if current_paragraph:
+                current_paragraph += " " + sentence_text
+            else:
+                current_paragraph = sentence_text
+                
+    # 不要忘記把最後一個段落也加進去
+    if current_paragraph:
+        paragraphs.append(current_paragraph)
+        
+    # 用兩個換行符 (代表一個空行) 將所有段落組合起來
+    final_text = "\n\n".join(paragraphs)
+    
+    return final_text
 
 # ----------------------------------------------------
 # 2. Streamlit 網頁介面定義 (這部分無需修改)
 # ----------------------------------------------------
 st.set_page_config(layout="wide", page_title="高效文字處理器")
-st.title('高效文字處理器 (Python 驅動)')
+st.title('高效文字處理器 (Python + NLP 驅動)')
 
 col1, col2 = st.columns(2)
 
@@ -59,18 +78,17 @@ with col2:
     st.markdown("**2. 內建處理規則 (程式碼驅動)**")
     st.info(
         """
-        本工具已內建以下核心清洗規則：
-        - **可靠去除**：時間戳 (如 `44:12`)
-        - **可靠去除**：常見口頭禪 (如 `嗯`, `啊`...)
-        - **自動添加**：為段落結尾補充句號
-        - **智能分段**：將內容整理成格式正確的段落
-        - **自動整理**：多餘的空格
+        本工具採用 **spaCy NLP 引擎** 進行智能處理：
+        - **智能分句**：能準確識別句子邊界，而不僅僅依賴標點。
+        - **自動分段**：將句子組合成不超過200字的最佳段落。
+        - **可靠去除**：時間戳和常見口頭禪。
         """
     )
 
 if st.button('開始處理', type="primary"):
     if original_text:
-        processed_result = process_text_by_rules(original_text)
+        # 調用我們新的 NLP 處理函式
+        processed_result = process_text_with_nlp(original_text)
         st.session_state['processed_text'] = processed_result
     else:
         st.warning("請先在左上方的「1. 原始文字」框中貼上內容。")
@@ -83,7 +101,7 @@ with col3:
     edited_text = st.text_area(
         "3. 處理後的純文本文字 (可在此手動編輯)",
         value=st.session_state.get('processed_text', ''),
-        height=300, # 編輯框依然使用固定高度，避免與自適應JS衝突
+        height=300,
         key="editor"
     )
 
