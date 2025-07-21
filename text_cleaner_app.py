@@ -103,9 +103,11 @@ with col3:
         key="editor"
     )
 
+# ... 省略前面的程式碼 ...
+
 with col4:
     st.markdown("**4. 所見即所得的可發佈文字 (預覽)**")
-    # 使用 st.container() 和 CSS 來模擬預覽框，使其滾動
-    preview_container = st.container(height=350, border=True)
+    # 移除 height 和 border 參數以確保最大相容性
+    preview_container = st.container() 
     with preview_container:
         st.markdown(edited_text)
